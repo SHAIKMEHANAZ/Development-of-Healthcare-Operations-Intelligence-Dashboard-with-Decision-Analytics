@@ -177,28 +177,78 @@ MedOps implements **21 specialized dashboard modules** organized into 5 operatio
 
 ## 7. System Architecture
 
-MedOps employs a decoupled, multi-region cloud architecture separating presentation, API routing, serverless SQL compute, and data lake storage across specialized AWS regions and Vercel edge infrastructure:
+MedOps employs a decoupled, multi-tier cloud architecture separating client presentation, API routing, serverless compute, keyless identity federation, and distributed data lake analytics across specialized AWS regions and Vercel edge infrastructure.
+
+### System Architecture Layers & Security Topology
+
+The architectural layers, service communication boundaries, keyless workload authentication flow, and data lake integration are visualized below:
+
+<div align="center">
+<img src="docs/assets/architecture_layers.png" alt="MedOps System Architecture Layers and Security Topology" width="850" style="border-radius: 8px; border: 1px solid #CBD5E1;" />
+<br/>
+<em>Figure 7.1: MedOps End-to-End System Architecture Layers, Keyless OIDC Authentication, and Analytics Pipeline</em>
+</div>
+
+> [!IMPORTANT]
+> **Zero-Key Server-Side Security Isolation**: AWS credentials and short-lived tokens stay strictly on the server side (`FastAPI Backend`). The client browser never receives, handles, or stores AWS access keys or secrets, completely mitigating client-side credential exfiltration risks.
+
+### Detailed Architecture Layers Breakdown
+
+1. **User / Browser Layer (Executive Client)**:
+   * Executive hospital leadership, department directors, and clinical administrators interact with the responsive dashboard via modern web browsers.
+   * Provides real-time cross-facility slicing (`FAC001` to `FAC005`), temporal scoping (`daily`, `weekly`, `monthly`, `annual`), and navigation across 21 specialized healthcare intelligence modules.
+
+2. **Client Presentation Layer (`React + TypeScript + Vite`)**:
+   * **Framework & Build**: Built with React 19, TypeScript 5.8+, and Vite 8.3 for instant Hot Module Replacement (HMR) and optimized client bundle production.
+   * **Design & Visuals**: Styled with Tailwind CSS v4 in an accessible dark-slate clinical theme (`#0F172A`, `#14B8A6`, `#3B82F6`) and Lucide React icons.
+   * **Data Visualization**: Employs Recharts 2.15+ for interactive SVG/canvas rendering (occupancy gauges, financial area charts, LOS histograms, and triage status grids).
+   * **Session & Identity Guard**: Interacts with Amazon Cognito Managed Login (OAuth 2.0 with PKCE) and encapsulates sessions inside `sessionStorage`.
+
+3. **API Transport & Routing Layer (`apiService.ts · HTTPS / REST`)**:
+   * **Axios REST Client**: Encapsulated within [`apiService.ts`](file:///src/services/apiService.ts), providing typed request generation, Bearer token authorization, latency telemetry, and standardized error parsing.
+   * **Vercel Edge Rewrites**: The edge network transparently routes `/api/(.*)` requests defined in [`vercel.json`](file:///vercel.json) to the serverless ASGI backend without exposing internal infrastructure addresses.
+
+4. **Serverless Application Backend Layer (`FastAPI Backend`)**:
+   * **Serverless Execution**: Hosted on Vercel's serverless Python runtime powered by FastAPI 0.115+ and Uvicorn.
+   * **Pydantic v2 Validation**: Enforces strict data contracts for query parameters and JSON payloads (`FacilityId`, `Timeframe`, filter schemas).
+   * **In-Memory Cache (Tier 1)**: Caches normalized analytics payloads with a 300-second TTL in memory, delivering sub-10ms response times on frequent queries.
+   * **Business Logic & Vectorization**: Employs Pandas 2.2+ and NumPy 2.1+ for defensive column conversion, outlier trimming, rolling 7-day polynomial regression, and financial aggregation.
+
+5. **Workload Identity Federation & Security Layer (`Vercel OIDC` ➔ `AWS STS via OIDC`)**:
+   * **Zero Static IAM Keys**: Eliminates hardcoded or long-lived AWS IAM credentials in cloud environment variables.
+   * **Dynamic Token Exchange**: Vercel runtime injects a cryptographically signed workload identity token (`x-vercel-oidc-token`).
+   * **AWS STS AssumeRoleWithWebIdentity**: The backend exchanges the OIDC token with AWS STS for temporary, least-privilege IAM credentials valid for 1 hour.
+   * **Security Boundary Guarantee**: AWS credentials and tokens stay on the server side; the browser never receives AWS access keys.
+
+6. **Analytics Services & Cloud Data Lake Layer (`Analytics Services` ➔ `Athena` / `Glue` / `S3`)**:
+   * **Analytics Services**: Backend domain orchestration services (`dashboard_service.py`, `copilot_service.py`) translating user intent into analytical queries.
+   * **Amazon Athena (`ap-south-2` Hyderabad)**: Serverless distributed Presto/Trino SQL query engine executing live ANSI SQL queries against raw storage partitions on demand.
+   * **AWS Glue Data Catalog (`ap-south-2` Hyderabad)**: Relational schema registry maintaining definitions, data types, and S3 partition locations for the `medical_operations_db` database (41 tables).
+   * **Amazon S3 Data Lake (`ap-south-1` Mumbai)**: Centralized object storage hosting 41 normalized CSV datasets (100,530 records) in `s3://medical-operations-bharath-2026/raw/`, with Athena execution results directed to a dedicated results bucket.
+
+7. **Generative AI Decision Copilot Layer (`Amazon Bedrock AI`)**:
+   * **Model Provider**: Powered by Amazon Bedrock (`amazon.nova-lite-v1:0` in `us-east-1`) with a multi-provider fallback hierarchy to Google Gemini (`gemini-3.5-flash`).
+   * **Zero-PHI Prompt Engineering**: Serializes only macro-level operational aggregates (KPI averages, capacity percentages, financial totals) into prompt context. Individual patient identifiers and HIPAA-protected health information are strictly isolated and never transmitted.
+
+---
+
+### Request-Response Microservice Topology
 
 ```
-[ Browser / Executive Client ]
-         │
-         ▼  (HTTPS / React 19 SPA)
-[ Vercel Edge Network ]
-   ├── Static Client Bundle (HTML / JS / CSS)
-   └── Edge Rewrite (/api/*) ──► [ FastAPI Serverless Microservice ]
-                                        │
-             ┌──────────────────────────┼──────────────────────────┐
-             ▼                          ▼                          ▼
-     [ In-Memory Cache ]      [ Amazon Athena (SQL) ]      [ Zero-PHI AI Engine ]
-     (300s TTL / Sub-10ms)      (ap-south-2 Presto)         (Gemini / Bedrock)
-                                        │                          │
-                                        ▼                          ▼
-                                [ AWS Glue Catalog ]       [ Macro Aggregates ]
-                                (ap-south-2 Schemas)       (Zero Patient PHI)
-                                        │
-                                        ▼
-                                [ Amazon S3 Lake ]
-                               (ap-south-1 CSV Data)
+[ USER / BROWSER ]
+       │
+       ▼  (HTTPS / React 19 SPA)
+[ React + TypeScript + Vite (MedOps Frontend) ]
+       │
+       ▼  (apiService.ts · HTTPS / REST)
+[ Vercel Edge Rewrites (/api/*) ]
+       │
+       ▼
+[ FastAPI Backend (Vercel Serverless Runtime) ]
+   ├── 1. In-Memory Cache (300s TTL / Sub-10ms)
+   ├── 2. Security: Vercel OIDC Token ──► AWS STS (AssumeRoleWithWebIdentity)
+   ├── 3. Analytics Services ──► Amazon Athena (SQL) ──► AWS Glue Catalog ──► Amazon S3 Lake
+   └── 4. AI Copilot Engine ──► Amazon Bedrock AI (Nova Lite) / Google Gemini
 ```
 
 ### 10-Step Request-Response Execution Lifecycle
@@ -257,18 +307,31 @@ The comprehensive multi-region cloud architecture diagram is maintained in the r
 <em>Figure 9.1: MedOps Decoupled Multi-Region Cloud Architecture Blueprint</em>
 </div>
 
-Additional architectural diagrams available in repository:
-* Data Flow Pipeline Diagram: [docs/assets/data_flow_diagram.png](file:///docs/assets/data_flow_diagram.png)
-* Entity-Relationship (41 Tables) Diagram: [docs/assets/er_diagram.png](file:///docs/assets/er_diagram.png)
+### Architectural Diagrams & Visual Assets Catalog
+
+The repository provides high-resolution diagrams illustrating every architectural facet of the platform:
+
+| Asset | File Reference | Scope & Architectural Description |
+| :--- | :--- | :--- |
+| **System Architecture Layers** | [docs/assets/architecture_layers.png](file:///docs/assets/architecture_layers.png) | High-level component layers: Browser ➔ Vite Frontend ➔ REST Transport ➔ FastAPI Backend ➔ Vercel OIDC/STS ➔ Athena/Glue/S3 Analytics & Bedrock AI. |
+| **Multi-Region Cloud Blueprint** | [docs/assets/arch_diagram.png](file:///docs/assets/arch_diagram.png) | Decoupled multi-region cloud infrastructure blueprint spanning `ap-south-1` (S3), `ap-south-2` (Athena/Glue), and `us-east-1` (Bedrock/Cognito). |
+| **Data Flow Pipeline Diagram** | [docs/assets/data_flow_diagram.png](file:///docs/assets/data_flow_diagram.png) | End-to-end data lifecycle: CSV generation, Athena Presto queries, Pandas transformation, and reactive UI chart updates. |
+| **Entity-Relationship Diagram** | [docs/assets/er_diagram.png](file:///docs/assets/er_diagram.png) | Complete relational schema diagram across all 41 tables spanning 6 clinical and operational healthcare domains. |
+| **Production Application Screenshot** | [docs/assets/application_screenshot.png](file:///docs/assets/application_screenshot.png) | Live Executive Command Center interface featuring cross-facility slicing, live Athena telemetry, and AI executive briefings. |
+
+> [!TIP]
+> For individual module interaction diagrams, authentication workflows, and failover pathways, explore the [26 Dedicated Mermaid Architecture Diagrams](file:///docs/architecture-diagrams/README.md) in the documentation directory.
 
 ---
 
 ## 10. Application Screenshots
 
+The production interface screenshot of the live application is maintained in the repository at [docs/assets/application_screenshot.png](file:///docs/assets/application_screenshot.png):
+
 <div align="center">
-<img src="src/assets/hero.png" alt="MedOps Executive Command Center Interface" width="850" style="border-radius: 8px; border: 1px solid #CBD5E1;" />
+<img src="docs/assets/application_screenshot.png" alt="MedOps Executive Command Center Interface" width="850" style="border-radius: 8px; border: 1px solid #CBD5E1;" />
 <br/>
-<em>Figure 10.1: MedOps Executive Command Center with Cross-Facility Slicing and Real-Time KPI Cards</em>
+<em>Figure 10.1: MedOps Executive Command Center with Cross-Facility Slicing, Real-Time Athena Telemetry, and AI Executive Briefing</em>
 </div>
 
 ---
@@ -312,7 +375,12 @@ Development-of-Healthcare-Operations-Intelligence-Dashboard-with-Decision-Analyt
 │   │   ├── task-board.md                 # 32 Done Tasks & Roadmap Kanban Board
 │   │   ├── progress-report.md            # Comprehensive Milestone Progress Synthesis
 │   │   └── README.md                     # Agile Documentation Master Index
-│   ├── assets/                           # Architecture, Data Flow, and ER Diagrams
+│   ├── assets/                           # High-Resolution Architectural & Entity Diagrams
+│   │   ├── architecture_layers.png       # End-to-End Architecture Layers & Security Topology
+│   │   ├── arch_diagram.png              # Multi-Region Cloud Architecture Blueprint
+│   │   ├── data_flow_diagram.png         # 8-Stage Data Lake & Athena Lifecycle Flow
+│   │   ├── er_diagram.png                # 41-Table Relational Entity-Relationship Diagram
+│   │   └── application_screenshot.png    # Production Executive Command Center Interface
 │   ├── MedOps_Project_Documentation.pdf  # 20-Page Formal Project Technical Report (PDF)
 │   ├── MedOps_Project_Documentation.docx # Editable Formal Project Technical Report (DOCX)
 │   └── README_Documentation_Index.md     # Master Technical Documentation Index

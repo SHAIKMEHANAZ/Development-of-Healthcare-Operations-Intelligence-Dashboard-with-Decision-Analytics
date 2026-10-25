@@ -27,9 +27,11 @@ docs/
 │   ├── 03-resilient-data-retrieval-hierarchy.md
 │   └── [04-25 Individual Dashboard Module Diagrams]
 └── assets/                             # High-Resolution Architectural & Entity Diagrams
+    ├── architecture_layers.png         # End-to-End Architecture Layers & Security Topology
     ├── arch_diagram.png                # Multi-Region Cloud Architecture Blueprint
     ├── data_flow_diagram.png           # 8-Stage Data Lake & Athena Lifecycle Flow
-    └── er_diagram.png                  # 41-Table Relational Entity-Relationship Diagram
+    ├── er_diagram.png                  # 41-Table Relational Entity-Relationship Diagram
+    └── application_screenshot.png      # Production Executive Command Center Interface
 ```
 
 ---
@@ -91,10 +93,12 @@ The [`docs/architecture-diagrams/`](file:///docs/architecture-diagrams/) directo
   * [01: Amazon Cognito PKCE Authentication](file:///docs/architecture-diagrams/01-cognito-pkce-authentication.md)
   * [02: Vercel OIDC & AWS STS Credential Exchange](file:///docs/architecture-diagrams/02-vercel-oidc-aws-credentials.md)
   * [03: Resilient 5-Tier Data Retrieval Hierarchy](file:///docs/architecture-diagrams/03-resilient-data-retrieval-hierarchy.md)
-* **High-Resolution Static Diagrams** in [`docs/assets/`](file:///docs/assets/):
+* **High-Resolution Static Diagrams & Screenshots** in [`docs/assets/`](file:///docs/assets/):
+  * `architecture_layers.png`: End-to-end architecture layers, keyless OIDC authentication, and backend analytics data flow.
   * `arch_diagram.png`: End-to-end multi-region cloud architecture blueprint.
   * `data_flow_diagram.png`: Multi-region S3, Glue, and Athena SQL lifecycle flow.
   * `er_diagram.png`: Relational schema layout for all 41 tables.
+  * `application_screenshot.png`: Live production Executive Command Center dashboard interface.
 
 ---
 
